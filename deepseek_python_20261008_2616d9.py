@@ -2,7 +2,9 @@ import asyncio
 import random
 import logging
 import base64
+import os
 import aiosqlite
+from aiohttp import web
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -20,14 +22,11 @@ _ADMIN_HASH = "ODgyMzczOTgzNg=="
 ADMIN_ID = int(base64.b64decode(_ADMIN_HASH).decode())
 
 # --- СПОНСОРЫ ---
-# Каналы, на которые проверяем подписку
 CHANNELS = [
     "@FreeGifftt",
     "@Gsvbsjskdj",
-    # "@Второй_канал",
 ]
 
-# Спонсоры, на которых НЕ проверяем подписку
 EXTRA_SPONSORS = [
     # {"id": "@username_bot", "title": "🤖 Название"},
 ]
@@ -36,7 +35,7 @@ logging.basicConfig(level=logging.INFO)
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# --- РАБОТА С БАЗОЙ ДАННЫХ ---
+# --- БАЗА ДАННЫХ ---
 
 async def init_db():
     async with aiosqlite.connect(DB_PATH) as db:
@@ -54,15 +53,13 @@ async def init_db():
 async def get_user(user_id: int) -> dict:
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
+        await db.execute(
+            "INSERT OR IGNORE INTO users (user_id, username, ref_count, balance, referrals) VALUES (?, ?, 0, 0, '')",
+            (user_id, None)
+        )
+        await db.commit()
         async with db.execute("SELECT * FROM users WHERE user_id = ?", (user_id,)) as cursor:
             row = await cursor.fetchone()
-            if row is None:
-                await db.execute(
-                    "INSERT INTO users (user_id, username, ref_count, balance, referrals) VALUES (?, ?, 0, 0, '')",
-                    (user_id, None)
-                )
-                await db.commit()
-                return {"user_id": user_id, "username": None, "ref_count": 0, "balance": 0, "referrals": ""}
             return dict(row)
 
 async def update_username(user_id: int, username: str):
@@ -71,15 +68,22 @@ async def update_username(user_id: int, username: str):
         await db.commit()
 
 async def add_referral(referrer_id: int, new_user_id: int):
-    referrer = await get_user(referrer_id)
-    referrals_list = referrer["referrals"].split(",") if referrer["referrals"] else []
-    if str(new_user_id) in referrals_list:
-        return False
-    referrals_list.append(str(new_user_id))
-    new_referrals_str = ",".join(referrals_list)
-    new_count = referrer["ref_count"] + 1
-    new_balance = referrer["balance"] + 100
     async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT referrals, ref_count, balance FROM users WHERE user_id = ?", (referrer_id,)) as cursor:
+            row = await cursor.fetchone()
+            if row is None:
+                return False
+        
+        referrals_list = row["referrals"].split(",") if row["referrals"] else []
+        if str(new_user_id) in referrals_list:
+            return False
+        
+        referrals_list.append(str(new_user_id))
+        new_referrals_str = ",".join(referrals_list)
+        new_count = row["ref_count"] + 1
+        new_balance = row["balance"] + 100
+        
         await db.execute(
             "UPDATE users SET referrals = ?, ref_count = ?, balance = ? WHERE user_id = ?",
             (new_referrals_str, new_count, new_balance, referrer_id)
@@ -119,10 +123,9 @@ async def reset_balance(user_id: int):
         await db.execute("UPDATE users SET balance = 0 WHERE user_id = ?", (user_id,))
         await db.commit()
 
-# --- ПРОВЕРКА ПОДПИСКИ (ТОЛЬКО КАНАЛЫ) ---
+# --- ПРОВЕРКА ПОДПИСКИ ---
 
 async def check_subscription(user_id: int):
-    """Проверяет подписку ТОЛЬКО на каналы"""
     for channel in CHANNELS:
         try:
             member = await bot.get_chat_member(chat_id=channel, user_id=user_id)
@@ -134,9 +137,7 @@ async def check_subscription(user_id: int):
     return True
 
 def get_sub_keyboard():
-    """Клавиатура: каналы + кнопка подтверждения"""
     builder = InlineKeyboardBuilder()
-    
     for i, channel in enumerate(CHANNELS, 1):
         clean_channel = channel.replace("@", "")
         link = f"https://t.me/{clean_channel}"
@@ -165,7 +166,7 @@ def get_main_keyboard(user_id):
 
 def get_profile_text(user: dict):
     ref_link = f"{BOT_LINK}?start=ref_{user['user_id']}"
-    text = (
+    return (
         f"<b>Твоя ссылка:</b>\n"
         f"{ref_link}\n\n"
         f"За каждого друга, который зайдёт и подпишется — <b>100⭐</b>.\n"
@@ -174,7 +175,6 @@ def get_profile_text(user: dict):
         f"В заявке на вывод: 0⭐\n\n"
         f"<b>Доступно к выводу:</b> {user['balance']}⭐"
     )
-    return text
 
 async def get_top_text():
     top_users = await get_top_users()
@@ -357,16 +357,7 @@ async def admin_reset(message: types.Message):
     except ValueError:
         await message.answer("❌ ID должен быть числом.")
 
-# --- ЗАПУСК ---
-
-async def main():
-    await init_db()
-    print("Бот запущен... База данных готова.")
-    await dp.start_polling(bot)
-
-if __name__ == "__main__":
-    import os
-from aiohttp import web
+# --- ВЕБ-СЕРВЕР ДЛЯ ПИНГОВ ---
 
 async def handle(request):
     return web.Response(text="Bot is alive!")
@@ -380,4 +371,14 @@ async def start_web_server():
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
     print(f"Веб-сервер запущен на порту {port}")
+
+# --- ЗАПУСК ---
+
+async def main():
+    await init_db()
+    asyncio.create_task(start_web_server())
+    print("Бот запущен... База данных готова.")
+    await dp.start_polling(bot)
+
+if __name__ == "__main__":
     asyncio.run(main())
