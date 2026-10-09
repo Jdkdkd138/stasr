@@ -23,10 +23,11 @@ ADMIN_ID = int(base64.b64decode(_ADMIN_HASH).decode())
 # Каналы, на которые проверяем подписку
 CHANNELS = [
     "@FreeGifftt",
+    "@Gsvbsjskdj",
     # "@Второй_канал",
 ]
 
-# Спонсоры, на которых НЕ проверяем подписку (только кнопки для перехода)
+# Спонсоры, на которых НЕ проверяем подписку
 EXTRA_SPONSORS = [
     # {"id": "@username_bot", "title": "🤖 Название"},
 ]
@@ -34,7 +35,6 @@ EXTRA_SPONSORS = [
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
-
 
 # --- РАБОТА С БАЗОЙ ДАННЫХ ---
 
@@ -51,7 +51,6 @@ async def init_db():
         """)
         await db.commit()
 
-
 async def get_user(user_id: int) -> dict:
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
@@ -66,12 +65,10 @@ async def get_user(user_id: int) -> dict:
                 return {"user_id": user_id, "username": None, "ref_count": 0, "balance": 0, "referrals": ""}
             return dict(row)
 
-
 async def update_username(user_id: int, username: str):
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("UPDATE users SET username = ? WHERE user_id = ?", (username, user_id))
         await db.commit()
-
 
 async def add_referral(referrer_id: int, new_user_id: int):
     referrer = await get_user(referrer_id)
@@ -90,17 +87,15 @@ async def add_referral(referrer_id: int, new_user_id: int):
         await db.commit()
     return True
 
-
 async def get_top_users(limit: int = 10):
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
-                "SELECT * FROM users WHERE ref_count > 0 ORDER BY ref_count DESC LIMIT ?",
-                (limit,)
+            "SELECT * FROM users WHERE ref_count > 0 ORDER BY ref_count DESC LIMIT ?",
+            (limit,)
         ) as cursor:
             rows = await cursor.fetchall()
             return [dict(r) for r in rows]
-
 
 async def get_all_users(limit: int = 50):
     async with aiosqlite.connect(DB_PATH) as db:
@@ -108,7 +103,6 @@ async def get_all_users(limit: int = 50):
         async with db.execute("SELECT * FROM users LIMIT ?", (limit,)) as cursor:
             rows = await cursor.fetchall()
             return [dict(r) for r in rows]
-
 
 async def get_stats():
     async with aiosqlite.connect(DB_PATH) as db:
@@ -120,12 +114,10 @@ async def get_stats():
                 "total_balance": row[2] or 0
             }
 
-
 async def reset_balance(user_id: int):
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("UPDATE users SET balance = 0 WHERE user_id = ?", (user_id,))
         await db.commit()
-
 
 # --- ПРОВЕРКА ПОДПИСКИ (ТОЛЬКО КАНАЛЫ) ---
 
@@ -141,40 +133,35 @@ async def check_subscription(user_id: int):
             return False
     return True
 
-
 def get_sub_keyboard():
     """Клавиатура: каналы + кнопка подтверждения"""
     builder = InlineKeyboardBuilder()
-
-    # Кнопки для каналов
+    
     for i, channel in enumerate(CHANNELS, 1):
         clean_channel = channel.replace("@", "")
         link = f"https://t.me/{clean_channel}"
         builder.row(InlineKeyboardButton(text=f"📢 Канал #{i}", url=link))
-
-    # Дополнительные спонсоры (если есть)
+    
     for sponsor in EXTRA_SPONSORS:
         clean_id = sponsor["id"].replace("@", "")
         link = f"https://t.me/{clean_id}"
         builder.row(InlineKeyboardButton(text=sponsor["title"], url=link))
-
+    
     builder.row(InlineKeyboardButton(text="✅ Я подписался", callback_data="check_sub"))
     return builder.as_markup()
-
 
 def get_main_keyboard(user_id):
     builder = InlineKeyboardBuilder()
     ref_link = f"{BOT_LINK}?start=ref_{user_id}"
     share_text = f"Заходи в бота, тут раздают звезды, за 1 реферала 100 звезд: {ref_link}"
     share_url = f"https://t.me/share/url?url={ref_link}&text={share_text}"
-
+    
     builder.row(InlineKeyboardButton(text="Поделиться ссылкой 🔗", url=share_url))
     builder.row(InlineKeyboardButton(text="Вывести звёзды", callback_data="withdraw"))
     builder.row(InlineKeyboardButton(text="🏆 Топ рефералов", callback_data="top"))
     builder.row(InlineKeyboardButton(text="Обновить", callback_data="refresh"))
     builder.row(InlineKeyboardButton(text="Помощь 🆘", url=HELPER_BOT))
     return builder.as_markup()
-
 
 def get_profile_text(user: dict):
     ref_link = f"{BOT_LINK}?start=ref_{user['user_id']}"
@@ -189,12 +176,11 @@ def get_profile_text(user: dict):
     )
     return text
 
-
 async def get_top_text():
     top_users = await get_top_users()
     if not top_users:
         return "🏆 <b>Топ рефералов</b>\n\nПока нет ни одного участника."
-
+    
     text = "🏆 <b>Топ рефералов</b>\n\n"
     medals = ["🥇", "🥈", "🥉"]
     for i, u in enumerate(top_users, 1):
@@ -203,20 +189,18 @@ async def get_top_text():
         text += f"{medal} {name} — {u['ref_count']} чел. ({u['balance']}⭐)\n"
     return text
 
-
 # --- ХЕНДЛЕРЫ ---
 
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
     user_id = message.from_user.id
     args = message.text.split()
-
+    
     user = await get_user(user_id)
     display_name = f"@{message.from_user.username}" if message.from_user.username else message.from_user.first_name
     await update_username(user_id, display_name)
     user = await get_user(user_id)
-
-    # Обработка реферальной ссылки
+    
     if len(args) > 1 and args[1].startswith("ref_"):
         try:
             referrer_id = int(args[1].split("_")[1])
@@ -224,8 +208,7 @@ async def cmd_start(message: types.Message):
                 success = await add_referral(referrer_id, user_id)
                 if success:
                     try:
-                        await bot.send_message(referrer_id,
-                                               "🎉 По твоей ссылке зашел новый пользователь! Тебе начислено 100⭐")
+                        await bot.send_message(referrer_id, "🎉 По твоей ссылке зашел новый пользователь! Тебе начислено 100⭐")
                     except:
                         pass
         except Exception as e:
@@ -246,7 +229,6 @@ async def cmd_start(message: types.Message):
             disable_web_page_preview=True
         )
 
-
 @dp.callback_query(F.data == "check_sub")
 async def check_sub(callback: types.CallbackQuery):
     user_id = callback.from_user.id
@@ -261,7 +243,6 @@ async def check_sub(callback: types.CallbackQuery):
         )
     else:
         await callback.answer("❌ Вы подписались не на все каналы!", show_alert=True)
-
 
 @dp.callback_query(F.data == "refresh")
 async def refresh_profile(callback: types.CallbackQuery):
@@ -278,7 +259,6 @@ async def refresh_profile(callback: types.CallbackQuery):
     except TelegramBadRequest:
         await callback.answer("Данные не изменились.")
 
-
 @dp.callback_query(F.data == "top")
 async def show_top(callback: types.CallbackQuery):
     try:
@@ -293,12 +273,11 @@ async def show_top(callback: types.CallbackQuery):
     except TelegramBadRequest:
         await callback.answer("Топ не изменился.")
 
-
 @dp.callback_query(F.data == "withdraw")
 async def withdraw(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     user = await get_user(user_id)
-
+    
     if user["ref_count"] < 5:
         await callback.answer(
             f"❌ Вывод доступен только от 5 рефералов!\nВам осталось пригласить: {5 - user['ref_count']} чел.",
@@ -317,7 +296,6 @@ async def withdraw(callback: types.CallbackQuery):
         )
         await callback.message.answer(text, parse_mode="HTML")
         await callback.answer()
-
 
 # --- АДМИН-КОМАНДЫ ---
 
@@ -338,7 +316,6 @@ async def admin_send(message: types.Message):
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
 
-
 @dp.message(Command("stats"))
 async def admin_stats(message: types.Message):
     if message.from_user.id != ADMIN_ID:
@@ -352,7 +329,6 @@ async def admin_stats(message: types.Message):
     )
     await message.answer(text, parse_mode="HTML")
 
-
 @dp.message(Command("users"))
 async def admin_users(message: types.Message):
     if message.from_user.id != ADMIN_ID:
@@ -365,7 +341,6 @@ async def admin_users(message: types.Message):
     for u in users:
         text += f"<code>{u['user_id']}</code> — {u['username']} — {u['ref_count']} реф.\n"
     await message.answer(text, parse_mode="HTML")
-
 
 @dp.message(Command("reset"))
 async def admin_reset(message: types.Message):
@@ -382,14 +357,12 @@ async def admin_reset(message: types.Message):
     except ValueError:
         await message.answer("❌ ID должен быть числом.")
 
-
 # --- ЗАПУСК ---
 
 async def main():
     await init_db()
     print("Бот запущен... База данных готова.")
     await dp.start_polling(bot)
-
 
 if __name__ == "__main__":
     asyncio.run(main())
