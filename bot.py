@@ -24,7 +24,6 @@ ADMIN_ID = int(base64.b64decode(_ADMIN_HASH).decode())
 # --- СПОНСОРЫ ---
 CHANNELS = [
     "@FreeGifftt",
-    "@Gsvbsjskdj",
 ]
 
 EXTRA_SPONSORS = [
